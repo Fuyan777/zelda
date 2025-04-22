@@ -1,12 +1,26 @@
 import pyxel
+import random
 
 Y_ALIGN = 20
 MAP_SIZE_X, MAP_SIZE_Y = 15, 11
 MAP_LIST = [
-    [0, 0], # 初期
-    [0, 1],
+    [0, 0], [0, 1], [0, 2], [0, 3],
     [1, 0]  # 洞窟
 ]
+# 方向の定数を先に定義
+DOWN, UP, LEFT, RIGHT = 0, 1, 2, 3 # Direction
+
+# 方向の反対方向を定義
+REV_DIR = {UP: DOWN, DOWN: UP, LEFT: RIGHT, RIGHT: LEFT}
+
+# 各マップの入口方向を定義（UP, DOWN, LEFT, RIGHT）
+ENTER_DIR = {
+    0: (UP, DOWN, LEFT, RIGHT),  # [0, 0] どの方向からでも入れる
+    1: (UP, RIGHT),              # [0, 1] 上と右からのみ入れる
+    2: (DOWN, LEFT),             # [0, 2] 下と左からのみ入れる
+    3: (UP, LEFT),               # [0, 3] 上と左からのみ入れる
+    4: (DOWN, RIGHT)             # [1, 0] 下と右からのみ入れる（洞窟）
+}
 MOVABLE_CHARA = ((0,0),(1,0),
                  (0,28)) # CAVE_CHARA
 CAVE_CHARA = ((0,28),)
@@ -14,12 +28,11 @@ MP_NONE, MP_OBST = 0, 1
 TILE_MAP = 0
 TILE_UNIT = 16
 WALL_TILE_Y = 30
-DOWN, UP, LEFT, RIGHT = 0, 1, 2, 3 # Direction
 MP_NONE = 0
-RET_NONE, RET_KILLED, RET_ATTACK, RET_CAVEIN, RET_MOVED, RET_CAVEOUT, RET_GETITEM = 0, 1, 2, 3, 4, 5, 6
+RET_NONE, RET_KILLED, RET_ATTACK, RET_CAVEIN, RET_MOVED, RET_CAVEOUT, RET_GETITEM, RET_SCROLL = 0, 1, 2, 3, 4, 5, 6, 7
 SC_OPENING, SC_GAMEOVER, SC_RETRYMENU, SC_SCROLL, SC_CAVEIN, SC_CAVEOUT, SC_CAVE_GETITEM, SC_OVERWORLD = 1,2,3,4,5,6,7,8
 ST_NONE, ST_INIT, ST_UPROCK, ST_LEFTROCK, ST_RIGHTROCK, ST_END = 0,1,2,3,4,5
-FIRST_MAP, CAVE_GETITEM_MAP = 0, 1
+FIRST_MAP, CAVE_GETITEM_MAP = 0, 4  # 洞窟マップは [1, 0] なので、インデックス4を指定
 CENTER_X, CENTER_Y = 16*7, 16*5
 # Object
 O_FLAME, O_OLDMAN1, O_OLDMAN2, O_OLDWOMAN, O_MOBLIN, O_MERCHANT = 801,802,803,804,805,806
@@ -98,25 +111,45 @@ class Player:
     def playermove(self, x, y, dirc, dmg=False, dst=2):
         ix, iy = x, y
         if dirc == UP:
-            if y - dst >= 0 and Map.zmap[x // 16][(y - dst) // 16] == MP_NONE:
+            x = (x//8)*8 if x%8<4 else (x//8+1)*8  # 8n倍に
+            if y - dst < 0 and not dmg:
+                Map.setscroll(UP)
+                y = (MAP_SIZE_Y-1)*16
+                return RET_SCROLL, x, y
+            if y - dst >= 0 and Map.zmap[x // 16][(y - dst) // 16] == MP_NONE and Map.zmap[(x+15) // 16][(y - dst) // 16] == MP_NONE:
                 y -= dst
                 return RET_MOVED, x, y
         elif dirc == DOWN:
-            if y + dst >= (MAP_SIZE_Y-1) * 16:
+            x = (x//8)*8 if x%8<4 else (x//8+1)*8  # 8n倍に
+            if y + dst >= (MAP_SIZE_Y-1) * 16 and not dmg:
                 if Map.now_map in (CAVE_GETITEM_MAP,):
                     Map.caveout()
                     self.caveout_count = 16
                     return RET_CAVEOUT, Map.cave_x * 16, Map.cave_y * 16 + 16
+                else:
+                    Map.setscroll(DOWN)
+                    y = 0
+                    return RET_SCROLL, x, y
 
-            if y + dst < (MAP_SIZE_Y - 1) * 16 and Map.zmap[x // 16][(y + 16 + dst) // 16] == MP_NONE:
+            if y + dst < (MAP_SIZE_Y - 1) * 16 and Map.zmap[x // 16][(y + 16 + dst) // 16] == MP_NONE and Map.zmap[(x+15) // 16][(y + 16 + dst) // 16] == MP_NONE:
                 y += dst
                 return RET_MOVED, x, y
         elif dirc == LEFT:
-            if x - dst >= 0 and Map.zmap[(x - dst) // 16][y // 16] == MP_NONE:
+            y = (y//8)*8 if y%8<4 else (y//8+1)*8  # 8n倍に
+            if x - dst < 0 and not dmg:
+                Map.setscroll(LEFT)
+                x = (MAP_SIZE_X-1)*16
+                return RET_SCROLL, x, y
+            if x - dst >= 0 and Map.zmap[(x - dst) // 16][y // 16] == MP_NONE and Map.zmap[(x - dst) // 16][(y+15) // 16] == MP_NONE:
                 x -= dst
                 return RET_MOVED, x, y
         elif dirc == RIGHT:
-            if x + dst <= (MAP_SIZE_X - 1) * 16 and Map.zmap[(x + 8 + dst) // 16][y // 16] == MP_NONE:
+            y = (y//8)*8 if y%8<4 else (y//8+1)*8  # 8n倍に
+            if x + dst >= (MAP_SIZE_X-1) * 16 and not dmg:
+                Map.setscroll(RIGHT)
+                x = 0
+                return RET_SCROLL, x, y
+            if x + dst < (MAP_SIZE_X - 1) * 16 and Map.zmap[(x + 16 + dst) // 16][y // 16] == MP_NONE and Map.zmap[(x + 16 + dst) // 16][(y+15) // 16] == MP_NONE:
                 x += dst
                 return RET_MOVED, x, y
         return RET_NONE, ix, iy
@@ -223,6 +256,9 @@ class Map:
     def setmap(cls, init=False):
         if init:
             cls.now_map = FIRST_MAP
+            cls.new_map = 0
+            cls.scrl_dir = None
+            cls.scrl_cnt = 0
         cls.thismap_item = 0
 
         cls.cave_x, cls.cave_y = -1, -1
@@ -242,22 +278,73 @@ class Map:
                     Map.zmap[x][y] = MP_OBST
 
     @classmethod
-    def setscroll(cls, direction, from_map, to_map):
-        cls.scroll_dir = direction
-        cls.scroll_count = 16 * 16  # Full screen scroll
-        cls.scroll_from = from_map
-        cls.scroll_to = to_map
+    def cavein(cls):
+        # 洞窟に入る時は必ず洞窟マップ（MAP_LIST の [1, 0]）を表示する
+        cls.now_map = CAVE_GETITEM_MAP  # CAVE_GETITEM_MAP は 1 に設定されている
+        cls.setmap()
     
     @classmethod
+    def caveout(cls):
+        cls.now_map = FIRST_MAP
+        cls.setmap()
+    
+    @classmethod
+    def setscroll(cls, dirc):
+        # リストの境界をチェック
+        next_map_index = cls.now_map
+        if dirc == UP:
+            # 上に行くと、[0, 1], [0, 2], [0, 3]のマップのどれかにランダムで移動
+            possible_maps = [1, 2, 3]
+            # 入り口方向をチェック - 上から出るなら、下から入れるマップを探す
+            valid_maps = [m for m in possible_maps if REV_DIR[dirc] in ENTER_DIR[m]]
+            if valid_maps:
+                next_map_index = random.choice(valid_maps)
+            else:
+                # 有効な入り口がなければ現在のマップのまま
+                next_map_index = cls.now_map
+        elif dirc == DOWN:
+            if next_map_index + 1 < len(MAP_LIST):
+                # 下に行くなら、次のマップは上から入れるかチェック
+                if UP in ENTER_DIR[next_map_index + 1]:
+                    next_map_index += 1
+        elif dirc == LEFT:
+            # 左に行くと、[0, 1], [0, 2], [0, 3]のマップのどれかにランダムで移動
+            possible_maps = [1, 2, 3]
+            # 入り口方向をチェック - 左から出るなら、右から入れるマップを探す
+            valid_maps = [m for m in possible_maps if REV_DIR[dirc] in ENTER_DIR[m]]
+            if valid_maps:
+                next_map_index = random.choice(valid_maps)
+            else:
+                # 有効な入り口がなければ現在のマップのまま
+                next_map_index = cls.now_map
+        elif dirc == RIGHT:
+            if next_map_index + 1 < len(MAP_LIST):
+                # 右方向に行くなら、次のマップは左から入れるかチェック
+                if LEFT in ENTER_DIR[next_map_index + 1]:
+                    next_map_index += 1
+        
+        # 敵を先にクリアする（MiniZeldaを参考に）
+        App.instance.enemies = []  # スクロール前に敵をクリア
+        
+        cls.new_map = next_map_index
+        cls.scrl_dir = dirc
+        
+        # スクロール時間の設定
+        if dirc in (UP, DOWN):
+            cls.scrl_cnt = MAP_SIZE_Y*2
+        else:  # LEFT, RIGHT
+            cls.scrl_cnt = MAP_SIZE_X*2
+
+    @classmethod
     def scrolling(cls):
-        cls.scroll_count -= 8  # Scroll speed
-        
-        if cls.scroll_count <= 0:
-            cls.now_map = cls.scroll_to
+        if cls.scrl_cnt:
+            cls.scrl_cnt -= 1
+        if cls.scrl_cnt == 0:
+            cls.now_map = cls.new_map
             cls.setmap()
-            cls.scroll_dir = None
+            # マップ切り替え後にApp.setnewenemy()を呼び出すようにフラグを立てる
+            App.need_new_enemy = True
             return True
-        
         return False
 
     @classmethod
@@ -266,64 +353,18 @@ class Map:
     
     @classmethod
     def draw_scroll(cls):
-        if cls.scroll_dir == RIGHT:
-            # Current map scrolling left
-            pyxel.bltm(-cls.scroll_count, Y_ALIGN, 0, 
-                       MAP_LIST[cls.scroll_from][0]*16*16, 
-                       MAP_LIST[cls.scroll_from][1]*12*16, 
-                       16*16, 11*16)
-            # Next map scrolling in from right
-            pyxel.bltm(16*16 - cls.scroll_count, Y_ALIGN, 0, 
-                      MAP_LIST[cls.scroll_to][0]*16*16, 
-                      MAP_LIST[cls.scroll_to][1]*12*16, 
-                      16*16, 11*16)
-        elif cls.scroll_dir == LEFT:
-            # Current map scrolling right
-            pyxel.bltm(-cls.scroll_count, Y_ALIGN, 0, 
-                        MAP_LIST[cls.scroll_from][0]*16*16, 
-                        MAP_LIST[cls.scroll_from][1]*12*16, 
-                        16*16, 11*16)
-            # Next map scrolling in from left (移動方向を修正)
-            pyxel.bltm(16*16 -cls.scroll_count, Y_ALIGN, 0, 
-                        MAP_LIST[cls.scroll_to][0]*16*16, 
-                        MAP_LIST[cls.scroll_to][1]*12*16, 
-                        16*16, 11*16)
-        elif cls.scroll_dir == UP:
-            # Current map scrolling down
-            pyxel.bltm(0, Y_ALIGN + cls.scroll_count, 0, 
-                       MAP_LIST[cls.scroll_from][0]*16*16, 
-                       MAP_LIST[cls.scroll_from][1]*12*16, 
-                       16*16, 11*16)
-            # Next map scrolling in from top
-            pyxel.bltm(0, Y_ALIGN + cls.scroll_count - 11*16, 0, 
-                      MAP_LIST[cls.scroll_to][0]*16*16, 
-                      MAP_LIST[cls.scroll_to][1]*12*16, 
-                      16*16, 11*16)
-        elif cls.scroll_dir == DOWN:
-            # Current map scrolling up
-            pyxel.bltm(0, Y_ALIGN - cls.scroll_count, 0, 
-                       MAP_LIST[cls.scroll_from][0]*16*16, 
-                       MAP_LIST[cls.scroll_from][1]*12*16, 
-                       16*16, 11*16)
-            # Next map scrolling in from bottom
-            pyxel.bltm(0, Y_ALIGN - cls.scroll_count + 11*16, 0, 
-                      MAP_LIST[cls.scroll_to][0]*16*16, 
-                      MAP_LIST[cls.scroll_to][1]*12*16, 
-                      16*16, 11*16)
-    
-    @classmethod
-    def get_tile(self, x, y):
-        return pyxel.tilemaps[TILE_MAP].pget(x, y)
-
-    @classmethod
-    def cavein(cls):
-        cls.now_map = CAVE_GETITEM_MAP
-        cls.setmap()
-    
-    @classmethod
-    def caveout(cls):
-        cls.now_map = FIRST_MAP
-        cls.setmap()
+        if cls.scrl_dir == UP:
+            pyxel.bltm(0, Y_ALIGN, 0, MAP_LIST[cls.new_map][0]*16*16, MAP_LIST[cls.new_map][1]*12*16+cls.scrl_cnt*8, 16*16, (MAP_SIZE_Y*2-cls.scrl_cnt)*8)
+            pyxel.bltm(0, Y_ALIGN+(MAP_SIZE_Y*2-cls.scrl_cnt)*8, 0, MAP_LIST[cls.now_map][0]*16*16, MAP_LIST[cls.now_map][1]*12*16, 16*16, cls.scrl_cnt*8)
+        elif cls.scrl_dir == DOWN:
+            pyxel.bltm(0, Y_ALIGN, 0, MAP_LIST[cls.now_map][0]*16*16, MAP_LIST[cls.now_map][1]*12*16+(MAP_SIZE_Y*2-cls.scrl_cnt)*8, 16*16, cls.scrl_cnt*8)
+            pyxel.bltm(0, Y_ALIGN+cls.scrl_cnt*8, 0, MAP_LIST[cls.new_map][0]*16*16, MAP_LIST[cls.new_map][1]*12*16, 16*16, (MAP_SIZE_Y*2-cls.scrl_cnt)*8)
+        elif cls.scrl_dir == LEFT:
+            pyxel.bltm(0, Y_ALIGN, 0, MAP_LIST[cls.new_map][0]*16*16+cls.scrl_cnt*8, MAP_LIST[cls.new_map][1]*12*16, (MAP_SIZE_X*2-cls.scrl_cnt)*8, 11*16)
+            pyxel.bltm(0+(MAP_SIZE_X*2-cls.scrl_cnt)*8, Y_ALIGN, 0, MAP_LIST[cls.now_map][0]*16*16, MAP_LIST[cls.now_map][1]*12*16, cls.scrl_cnt*8, 11*16)
+        else:  # RIGHT
+            pyxel.bltm(0, Y_ALIGN, 0, MAP_LIST[cls.now_map][0]*16*16+(MAP_SIZE_X*2-cls.scrl_cnt)*8, MAP_LIST[cls.now_map][1]*12*16, cls.scrl_cnt*8, 11*16)
+            pyxel.bltm(0+cls.scrl_cnt*8, Y_ALIGN, 0, MAP_LIST[cls.new_map][0]*16*16, MAP_LIST[cls.new_map][1]*12*16, (MAP_SIZE_X*2-cls.scrl_cnt)*8, 11*16)
 
 class Rupee:
     def __init__(self, x, y):
@@ -487,6 +528,9 @@ class App:
         pyxel.init(map_x, map_y, title="Zelda-like Game")
         pyxel.load("assets/resource.pyxres")
 
+        # クラス変数に自分自身を保存
+        App.instance = self
+
         # ゲームオブジェクトの初期化
         Map.setmap(init=True)
         self.player = Player(80, 60)
@@ -500,6 +544,8 @@ class App:
         self.status = ST_INIT
 
         self.nowmap_enemy = None
+        App.need_new_enemy = True  # 最初のマップにも敵を配置するためTrue
+        App.clear_enemies = False  # 敵クリアフラグを初期化
 
         pyxel.run(self.update, self.draw)
 
@@ -509,18 +555,21 @@ class App:
 
         # シーンの設定
         if self.scene == SC_SCROLL:
-            # Handle map scrolling
-            if Map.scrolling():
+            # マップスクロール中の処理
+            if Map.scrolling():  # スクロール終了したらTrue
                 self.scene = SC_OVERWORLD
+                self.status = ST_INIT
             return
         elif self.scene == SC_CAVEIN:
             if self.player.cavein():
                 if Map.now_map==CAVE_GETITEM_MAP:
                     self.scene = SC_CAVE_GETITEM
+                    self.status = ST_INIT
             return
         elif self.scene == SC_CAVEOUT:
             if self.player.caveout():
                 self.scene = SC_OVERWORLD
+                self.status = ST_INIT
             return
         elif self.scene == SC_CAVE_GETITEM:
             if self.status == ST_INIT:
@@ -542,41 +591,19 @@ class App:
                     self.person[i].update()
 
         elif self.scene == SC_OVERWORLD:
-            # Check for map edge transitions
-            if self.player.x <= 0:  # Left edge
-                print(self.player.x, "test")
-                next_map = self.get_adjacent_map(LEFT)
-                if next_map is not None:
-                    Map.setscroll(LEFT, Map.now_map, next_map)
-                    self.player.x = (MAP_SIZE_X - 1) * 16  # Move to right edge of new map
-                    self.scene = SC_SCROLL
-                    return
-            elif self.player.x >= (MAP_SIZE_X - 1) * 16:  # Right edge
-                next_map = self.get_adjacent_map(RIGHT)
-                if next_map is not None:
-                    Map.setscroll(RIGHT, Map.now_map, next_map)
-                    self.player.x = 0  # Move to left edge of new map
-                    self.scene = SC_SCROLL
-                    return
-            elif self.player.y <= 0:  # Top edge
-                next_map = self.get_adjacent_map(UP)
-                if next_map is not None:
-                    Map.setscroll(UP, Map.now_map, next_map)
-                    self.player.y = (MAP_SIZE_Y - 2) * 16  # Move to bottom edge of new map
-                    self.scene = SC_SCROLL
-                    return
-            elif self.player.y >= (MAP_SIZE_Y - 1) * 16:  # Bottom edge
-                next_map = self.get_adjacent_map(DOWN)
-                if next_map is not None:
-                    Map.setscroll(DOWN, Map.now_map, next_map)
-                    self.player.y = 0  # Move to top edge of new map
-                    self.scene = SC_SCROLL
-                    return
+            if self.status == ST_INIT:
+                # 新しいマップに敵を配置
+                # if not self.nowmap_enemy:
+                    # self.nowmap_enemy = self.setnewenemy()
+                self.status = ST_NONE
 
         # プレイヤーの更新
         ret = self.player.update()
 
-        if ret==RET_CAVEIN:
+        if ret==RET_SCROLL:
+            self.scene = SC_SCROLL
+            return
+        elif ret==RET_CAVEIN:
             self.scene = SC_CAVEIN
             return
         elif ret==RET_CAVEOUT:
@@ -612,27 +639,14 @@ class App:
 
             if not ret:
                 self.sword = None
-    
-    def get_adjacent_map(self, direction):
-        # マップ接続情報の定義: [現在のマップID, 方向] -> 接続先マップID
-        map_connections = {
-            (FIRST_MAP, LEFT): 1,
-            (FIRST_MAP, RIGHT): 1,    # 右にマップID 1を接続
-            (FIRST_MAP, UP): None,    # 上には接続なし
-            (FIRST_MAP, DOWN): None,  # 下には接続なし
-            
-            (1, LEFT): 1,     # 左にはマップID 0 (FIRST_MAP)を接続
-            (1, RIGHT): None,         # 右には接続なし
-            (1, UP): None,            # 上には接続なし
-            (1, DOWN): None,          # 下には接続なし
-        }
-        
-        # 現在のマップと方向の組み合わせから接続先を取得
-        connection_key = (Map.now_map, direction)
-        if connection_key in map_connections:
-            return map_connections[connection_key]
-        
-        return None
+
+        if App.need_new_enemy:
+            self.setnewenemy()
+            App.need_new_enemy = False
+
+        if App.clear_enemies:
+            self.enemies = []  # 敵をクリア
+            App.clear_enemies = False  # フラグをリセット
 
     def handle_command(self):
         if pyxel.btn(pyxel.KEY_Z):
@@ -672,6 +686,7 @@ class App:
             if Map.thismap_item == W_SWORD:
                 Draw.item(NEWITEM_X2+4, NEWITEM_Y, W_SWORD)
 
+        # 敵は一時的に非表示にする
         for e in self.enemies:
             e.draw()
 
@@ -689,5 +704,20 @@ class App:
             pyxel.playm(2, loop=False)
         else:
             pyxel.stop()
+
+    def setnewenemy(self):
+        # 新しいマップに敵を配置する関数
+        newenemy = []
+        for _ in range(3):  # 3匹の敵を配置
+            x = pyxel.rndi(1, MAP_SIZE_X-2) * 16
+            y = pyxel.rndi(1, MAP_SIZE_Y-2) * 16
+            
+            # マップの障害物がない場所に敵を配置
+            if Map.zmap[x//16][y//16] == MP_NONE:
+                newenemy.append(Octorok(x, y))
+        
+        # 生成された敵をゲーム内の敵リストに追加
+        self.enemies = newenemy
+        return newenemy
 
 App()
