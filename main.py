@@ -29,13 +29,14 @@ TILE_MAP = 0
 TILE_UNIT = 16
 WALL_TILE_Y = 30
 MP_NONE = 0
-RET_NONE, RET_KILLED, RET_ATTACK, RET_CAVEIN, RET_MOVED, RET_CAVEOUT, RET_GETITEM, RET_SCROLL = 0, 1, 2, 3, 4, 5, 6, 7
+RET_NONE, RET_KILLED, RET_ATTACK, RET_CAVEIN, RET_MOVED, RET_CAVEOUT, RET_GETITEM, RET_SCROLL, RET_SHOOT = 0, 1, 2, 3, 4, 5, 6, 7, 8
 SC_OPENING, SC_GAMEOVER, SC_RETRYMENU, SC_SCROLL, SC_CAVEIN, SC_CAVEOUT, SC_CAVE_GETITEM, SC_OVERWORLD = 1,2,3,4,5,6,7,8
 ST_NONE, ST_INIT, ST_UPROCK, ST_LEFTROCK, ST_RIGHTROCK, ST_END = 0,1,2,3,4,5
 FIRST_MAP, CAVE_GETITEM_MAP = 0, 4  # 洞窟マップは [1, 0] なので、インデックス4を指定
 CENTER_X, CENTER_Y = 16*7, 16*5
 # Object
 O_FLAME, O_OLDMAN1, O_OLDMAN2, O_OLDWOMAN, O_MOBLIN, O_MERCHANT = 801,802,803,804,805,806
+OCTOROKROCK = 401
 PERSON_X, PERSON_Y = 7, 4
 I_NONE, W_SWORD = 0,1
 NEWITEM_X1, NEWITEM_X2, NEWITEM_X3, NEWITEM_Y = 16*5, 16*7, 16*9, 16*6
@@ -58,6 +59,9 @@ class Player:
         self.caveout_count = 0
         self.getitem_count = 0
         self.weapon = I_NONE  # Add weapon attribute
+        self.maxbomb = 4  # 最大ボム所持数
+        self.bomb = 4  # 現在のボム所持数
+        self.hold_b = False  # Bボタン用フラグ
 
     def update(self):
         ret = RET_NONE
@@ -203,6 +207,13 @@ class Player:
 
         return False
 
+    def updown_bomb(self, pt):
+        self.bomb += pt
+        if self.bomb > self.maxbomb:
+            self.bomb = self.maxbomb
+        elif self.bomb < 0:
+            self.bomb = 0
+
 class Sword:
     atk_x, atk_y, atk_w, atk_h, atk_dir, atk_dmg = 0, 0, 7, 16, 0, 0
 
@@ -245,6 +256,61 @@ class Sword:
 
     def draw(self, player_x, player_y, player_dirc):
         Draw.sword(player_x, player_y, player_dirc)
+
+class Bomb:
+    atk_x, atk_y, atk_w, atk_h, atk_dir, putbomb = 0, 0, 0, 0, DOWN, False
+    
+    def __init__(self, x, y, dirc):
+        if dirc == UP:
+            self.x, self.y = x + 4, y - 16
+        elif dirc == DOWN:
+            self.x, self.y = x + 4, y + 16
+        elif dirc == LEFT:
+            self.x, self.y = x - 12, y
+        elif dirc == RIGHT:
+            self.x, self.y = x + 20, y
+        
+        self.dirc = dirc
+        self.cnt = 46  # カウントダウン
+        Player.atk_posture_cnt = 4  # プレイヤーの動作
+        self.SMOKE_PTN = ((-1,-3),(-3,-1),(2,0))
+        self.ptn = pyxel.rndi(0,2)  # ランダムなパターンを選択
+        self.set_atk_range(self.x, self.y, 8, 16, putb=True)
+    
+    def __del__(self):
+        self.set_atk_range()
+    
+    @classmethod
+    def hit(cls, x, y, w, h):
+        if not Bomb.putbomb and Bomb.atk_x-w<x<Bomb.atk_x+Bomb.atk_w and Bomb.atk_y-h<y<Bomb.atk_y+Bomb.atk_h:
+            return True
+        return False
+    
+    @classmethod
+    def bombhit(cls, x, y, w, h):
+        if Bomb.putbomb and Bomb.atk_x-w<x<Bomb.atk_x+Bomb.atk_w and Bomb.atk_y-h<y<Bomb.atk_y+Bomb.atk_h:
+            return True
+        return False
+    
+    def set_atk_range(self, x=0, y=0, w=0, h=0, dirc=DOWN, putb=False):
+        Bomb.atk_x, Bomb.atk_y, Bomb.atk_w, Bomb.atk_h, Bomb.atk_dir, Bomb.putbomb = x, y, w, h, dirc, putb
+    
+    def update(self):
+        self.cnt -= 1
+        if self.cnt == 16:
+            self.set_atk_range(self.x - 12, self.y - 12, 40, 40)  # 爆発の範囲
+        elif self.cnt == 0:
+            self.set_atk_range()
+            return True  # 爆発完了
+        return False
+    
+    def draw(self):
+        if self.cnt <= 16:  # 爆発中
+            Draw.smoke(self.x - 4, self.y, self.cnt)
+            for dx, dy in self.SMOKE_PTN[self.ptn]:
+                Draw.smoke(self.x - 4 + dx * 8, self.y + dy * 8, self.cnt)
+        else:  # 通常時
+            Draw.bomb(self.x, self.y)
 
 class Map:
     scroll_dir = None
@@ -403,9 +469,12 @@ class BaseEnemy(EnemyDamage):
     def __init__(self, x, y, hp=1):
         self.x, self.y = x, y
         self.hp = hp
-        self.direction = pyxel.rndi(UP,RIGHT)
+        # DOWN, UP, LEFT, RIGHTのいずれかをランダムに選択
+        self.direction = pyxel.rndi(0, 3)  # 0から3の範囲で選ぶように修正
         self.walk_count = 0
         self.damage_count = 0
+        self.move_timer = 0  # 移動用タイマーを追加
+        self.move_speed = 1  # 移動速度
 
     def update(self):
         self.walk_count += 1
@@ -427,6 +496,33 @@ class BaseEnemy(EnemyDamage):
         if Player.hit(self.x, self.y, 16, 16):
             return RET_ATTACK
 
+        # 自動移動処理
+        self.move_timer += 1
+        if self.move_timer >= 30:  # 30フレームごとに方向変更
+            self.direction = pyxel.rndi(0, 3)  # 0から3の範囲で選ぶように修正 (DOWN, UP, LEFT, RIGHT)
+            self.move_timer = 0
+
+        # 現在の方向に移動
+        new_x, new_y = self.x, self.y
+        if self.direction == UP:
+            new_y -= self.move_speed
+        elif self.direction == DOWN:
+            new_y += self.move_speed
+        elif self.direction == LEFT:
+            new_x -= self.move_speed
+        elif self.direction == RIGHT:
+            new_x += self.move_speed
+        
+        # 移動先が画面内で障害物がないか確認
+        if (0 <= new_x < (MAP_SIZE_X-1) * 16 and 
+            0 <= new_y < (MAP_SIZE_Y-1) * 16 and
+            Map.zmap[new_x // 16][new_y // 16] == MP_NONE and
+            Map.zmap[(new_x+15) // 16][(new_y+15) // 16] == MP_NONE):
+            self.x, self.y = new_x, new_y
+        else:
+            # 障害物があれば方向転換
+            self.direction = pyxel.rndi(0, 3)  # ここも0から3の範囲に修正
+
         return RET_NONE
 
     def draw(self):
@@ -435,21 +531,115 @@ class BaseEnemy(EnemyDamage):
         else:
             self.draw_enemy(self.x, self.y, self.direction, self.walk_count//4%2)
 
+class BaseProjectile:
+    def __init__(self, x, y, dirc):
+        self.x = x
+        self.y = y
+        self.dirc = dirc
+        self.blocked = 0
+    
+    def update(self, player_dirc):
+        if self.blocked:
+            # 盾でブロックされた場合の処理
+            if self.dirc in (UP, RIGHT):
+                self.x -= 2
+                self.y += 2
+            elif self.dirc in (DOWN, LEFT):
+                self.x += 2
+                self.y -= 2
+            self.blocked -= 1
+            if self.blocked == 0:
+                return RET_KILLED, self.dirc
+        else:
+            # 通常移動
+            ret, self.x, self.y = self.canshoot(self.x, self.y, self.dirc)
+            if not ret:
+                return RET_KILLED, self.dirc
+            elif self.hit():
+                # プレイヤーが向かい合っていて剣を振っている場合はブロック
+                if self.name in (OCTOROKROCK,) and Player.atk_posture_cnt and self.dirc == REV_DIR[player_dirc]:
+                    self.blocked = 6
+                else:
+                    return RET_ATTACK, self.dirc
+        return RET_NONE, self.dirc
+    
+    def draw(self):
+        # 子クラスでオーバーライドする
+        pass
+
 class Octorok(BaseEnemy):
+    def __init__(self, x, y, hp=1):
+        super().__init__(x, y, hp)
+        self.shooting = 0  # 発射タイマー
+        self.shoot_interval = pyxel.rndi(100, 200)  # 発射間隔
+    
+    def update(self):
+        result = super().update()
+        
+        # 岩を投げるタイミング管理
+        if not self.damage_count:
+            self.shoot_interval -= 1
+            if self.shoot_interval <= 0:
+                self.shooting = 16  # 岩を投げる準備開始
+                self.shoot_interval = pyxel.rndi(100, 200)
+
+        # 発射タイミングになったら
+        if self.shooting > 0:
+            self.shooting -= 1
+            if self.shooting == 0:
+                return RET_SHOOT  # 岩を発射する
+
+        return result
+        
     def draw_enemy(self, x, y, direction, move_pattern):
         Draw.octorok(x, y, direction, move_pattern)
+
+class OctorokRock(BaseProjectile):  # 8x10
+    name = OCTOROKROCK
+
+    def __init__(self, x, y, dirc):
+        super().__init__(x, y, dirc)
+        self.setxy(x, y, dirc)
+    
+    def setxy(self, x, y, dirc):
+        self.x, self.y = x+4, y+3
+    
+    def canshoot(self, x, y, dirc):
+        if dirc == UP:
+            y -= 4
+            if y < 0:
+                return False, x, y
+        elif dirc == DOWN:
+            y += 4
+            if y > (MAP_SIZE_Y-1)*16:
+                return False, x, y
+        elif dirc == LEFT:
+            x -= 4
+            if x < 0:
+                return False, x, y
+        elif dirc == RIGHT:
+            x += 4
+            if x > (MAP_SIZE_X-1)*16:
+                return False, x, y
+        return True, x, y
+    
+    def hit(self):
+        return Player.dmg_x-8<self.x<Player.dmg_x+Player.dmg_w and Player.dmg_y<self.y<Player.dmg_y+Player.dmg_h
+    
+    def draw(self):
+        Draw.octorokrock(self.x, self.y)
 
 class Draw:
     @classmethod
     def octorok(cls, x, y, dirc, ptn):
         if dirc==UP:
-            pyxel.blt(x, y+Y_ALIGN, 0, 0, TILE_UNIT*2, 16, 16, 0)
+            pyxel.blt(x, y+Y_ALIGN, 0, ptn*16, TILE_UNIT*2, 16, -16, 0)
         elif dirc==DOWN:
-            pyxel.blt(x, y+Y_ALIGN, 0, 0, TILE_UNIT*2, 16, 16, 0)
+            pyxel.blt(x, y+Y_ALIGN, 0, ptn*16, TILE_UNIT*2, 16, 16, 0)
         elif dirc==LEFT:
-            pyxel.blt(x, y+Y_ALIGN, 0, 0, TILE_UNIT*2, 16, 16, 0)
+            pyxel.blt(x, y+Y_ALIGN, 0, TILE_UNIT*2 + ptn*16, TILE_UNIT*2, 16, 16, 0)
         elif dirc==RIGHT:
-            pyxel.blt(x, y+Y_ALIGN, 0, 0, TILE_UNIT*2, 16, 16, 0)
+            pyxel.blt(x, y+Y_ALIGN, 0, TILE_UNIT*2 + ptn*16, TILE_UNIT*2, -16, 16, 0)
 
     @classmethod
     def flash(cls, x, y, count):
@@ -475,6 +665,7 @@ class Draw:
     def player(cls, x, y, direction, move_pattern=0, swd=0, h=16, item=False):
         if item:
             pyxel.blt(x, y+Y_ALIGN, 0, 16*8, 16, 16, 16, 0)
+
             return
 
         if direction == UP:
@@ -521,6 +712,33 @@ class Draw:
         if weapon == W_SWORD:
             pyxel.blt(32, 1, 0, 16, TILE_UNIT*4, 8, 16, 1, 0, 0.9)
 
+    @classmethod
+    def octorokrock(cls, x, y):
+        pyxel.blt(x, y+Y_ALIGN, 0, 16*4, 0, 8, 8, 0)
+
+    @classmethod
+    def bomb(cls, x, y):
+        # ボムの描画
+        pyxel.blt(x, y+Y_ALIGN, 0, 16*2+8, 16*3, 8, 16, 0)
+        
+    @classmethod
+    def smoke(cls, x, y, cnt):
+        # 爆発の煙の描画
+        if cnt > 12:
+            pyxel.blt(x, y+Y_ALIGN, 0, 16*5, 0, 16, 16, 0)
+        elif cnt > 8:
+            pyxel.blt(x, y+Y_ALIGN, 0, 16*6, 0, 16, 16, 0)
+        elif cnt > 4:
+            pyxel.blt(x, y+Y_ALIGN, 0, 16*7, 0, 16, 16, 0)
+        else:
+            pass
+            
+    @classmethod
+    def ownbomb(cls, x, y, bomb):
+        # ボムの所持数表示
+        pyxel.blt(x, y, 0, 16*2, 16*4, 8, 8, 1)
+        pyxel.text(x+10, y+2, str(bomb), 7)
+
 class App:
     def __init__(self):
         map_x = TILE_UNIT*MAP_SIZE_X
@@ -537,11 +755,13 @@ class App:
 
         self.scene = SC_OVERWORLD
         self.sword = None
+        self.bomb = None  # ボムを追加
         self.enemies = []  # 敵を管理するリスト
         self.rupees = []  # ルピーを管理するリスト
         self.flame = []
         self.person = []
         self.status = ST_INIT
+        self.enemypjtl = []  # 敵の発射物リスト
 
         self.nowmap_enemy = None
         App.need_new_enemy = True  # 最初のマップにも敵を配置するためTrue
@@ -613,15 +833,39 @@ class App:
             self.bgm(M_TREASURE)
             return
 
+        # ボムの更新
+        if self.bomb is not None:
+            if self.bomb.update():  # 爆発完了したらTrue
+                # 爆風で敵にダメージを与える
+                for i in reversed(range(len(self.enemies))):
+                    # 爆風範囲内の敵にはダメージを与える
+                    if Bomb.hit(self.enemies[i].x, self.enemies[i].y, 16, 16):
+                        self.enemies[i].damage_count = 16
+                        self.enemies[i].hp -= 4  # 爆弾で4ダメージ
+                        if self.enemies[i].hp <= 0:
+                            self.rupees.append(Rupee(self.enemies[i].x, self.enemies[i].y))
+                            del self.enemies[i]
+                self.bomb = None
+
         for i in reversed(range(len(self.enemies))): # 敵
             ret = self.enemies[i].update()
 
             if ret == RET_KILLED:
                 self.rupees.append(Rupee(self.enemies[i].x, self.enemies[i].y))
-
                 del self.enemies[i]
             elif ret == RET_ATTACK and self.player.damage_count == 0:
                 self.player_damaged()
+            elif ret == RET_SHOOT:  # オクタロックが岩を発射
+                self.enemypjtl.append(OctorokRock(self.enemies[i].x, self.enemies[i].y, self.enemies[i].direction))
+
+        # 敵の発射物（岩など）の更新
+        for i in reversed(range(len(self.enemypjtl))):
+            ret, dirc = self.enemypjtl[i].update(self.player.direction)
+            if ret == RET_KILLED:
+                del self.enemypjtl[i]
+            elif ret == RET_ATTACK and self.player.damage_count == 0:
+                self.player_damaged()
+                del self.enemypjtl[i]
 
         # ルピーの更新
         for rupee in self.rupees:
@@ -649,9 +893,19 @@ class App:
             App.clear_enemies = False  # フラグをリセット
 
     def handle_command(self):
+        # ソードを振る
         if pyxel.btn(pyxel.KEY_Z):
             if self.sword is None:
                 self.sword = Sword(self.player.x, self.player.y, self.player.direction)
+        
+        # ボムを設置（Xボタン）
+        if pyxel.btnp(pyxel.KEY_X):
+            if not self.player.hold_b and Player.atk_posture_cnt == 0 and self.bomb is None and self.player.bomb > 0:
+                self.player.hold_b = True
+                self.player.updown_bomb(-1)
+                self.bomb = Bomb(self.player.x, self.player.y, self.player.direction)
+        else:
+            self.player.hold_b = False
     
     def player_damaged(self, pt=1):
         self.player.damage_count = 80
@@ -673,6 +927,16 @@ class App:
         pyxel.text(27, 7, "Z", 7)
         if self.player.weapon != I_NONE:
             Draw.ownweapon(self.player.weapon)
+            
+        # ボムの所持数の表示
+        Draw.ownbomb(45, 1, self.player.bomb)
+        
+        # ボタンのヘルプ表示
+        pyxel.text(45, 10, "X:Bomb", 7)
+
+        # ボムの描画
+        if self.bomb is not None:
+            self.bomb.draw()
 
         if self.sword is not None:
             self.sword.draw(self.player.x, self.player.y, self.player.direction)  # ソード
@@ -686,9 +950,13 @@ class App:
             if Map.thismap_item == W_SWORD:
                 Draw.item(NEWITEM_X2+4, NEWITEM_Y, W_SWORD)
 
-        # 敵は一時的に非表示にする
+        # 敵の描画
         for e in self.enemies:
             e.draw()
+            
+        # 敵の発射物（岩など）の描画
+        for p in self.enemypjtl:
+            p.draw()
 
         # ルピーの描画
         for rupee in self.rupees:
@@ -708,6 +976,12 @@ class App:
     def setnewenemy(self):
         # 新しいマップに敵を配置する関数
         newenemy = []
+        
+        # 初期マップ（FIRST_MAP=0）の場合は敵を配置しない
+        if Map.now_map == FIRST_MAP:
+            self.enemies = []
+            return []
+            
         for _ in range(3):  # 3匹の敵を配置
             x = pyxel.rndi(1, MAP_SIZE_X-2) * 16
             y = pyxel.rndi(1, MAP_SIZE_Y-2) * 16
