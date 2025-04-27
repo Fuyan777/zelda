@@ -62,6 +62,10 @@ class Player:
         self.maxbomb = 4  # 最大ボム所持数
         self.bomb = 4  # 現在のボム所持数
         self.hold_b = False  # Bボタン用フラグ
+        # ノックバック関連の変数を追加
+        self.knockback_count = 0  # ノックバック時間
+        self.knockback_dir = DOWN  # ノックバック方向
+        self.knockback_dist = 4  # ノックバック距離
 
     def update(self):
         ret = RET_NONE
@@ -76,18 +80,25 @@ class Player:
             if self.getitem_count == 1:
                 self.weapon = W_SWORD  # Set weapon when getting sword
         else:
-            if pyxel.btn(pyxel.KEY_DOWN):
-                self.direction = DOWN
-                ret, self.x, self.y = self.playermove(self.x, self.y, DOWN)
-            elif pyxel.btn(pyxel.KEY_UP):
-                self.direction = UP
-                ret, self.x, self.y = self.playermove(self.x, self.y, UP)
-            elif pyxel.btn(pyxel.KEY_LEFT):
-                self.direction = LEFT
-                ret, self.x, self.y = self.playermove(self.x, self.y, LEFT)
-            elif pyxel.btn(pyxel.KEY_RIGHT):
-                self.direction = RIGHT
-                ret, self.x, self.y = self.playermove(self.x, self.y, RIGHT)
+            # ノックバック処理を追加
+            if self.knockback_count > 0:
+                self.knockback_count -= 1
+                # ノックバック方向に移動
+                ret, self.x, self.y = self.playermove(self.x, self.y, self.knockback_dir, dmg=True, dst=self.knockback_dist)
+            else:
+                # 通常の移動処理
+                if pyxel.btn(pyxel.KEY_DOWN):
+                    self.direction = DOWN
+                    ret, self.x, self.y = self.playermove(self.x, self.y, DOWN)
+                elif pyxel.btn(pyxel.KEY_UP):
+                    self.direction = UP
+                    ret, self.x, self.y = self.playermove(self.x, self.y, UP)
+                elif pyxel.btn(pyxel.KEY_LEFT):
+                    self.direction = LEFT
+                    ret, self.x, self.y = self.playermove(self.x, self.y, LEFT)
+                elif pyxel.btn(pyxel.KEY_RIGHT):
+                    self.direction = RIGHT
+                    ret, self.x, self.y = self.playermove(self.x, self.y, RIGHT)
 
             if ret==RET_MOVED:
                 self.walk_count += 1
@@ -273,8 +284,8 @@ class Bomb:
         self.dirc = dirc
         self.cnt = 46  # カウントダウン
         Player.atk_posture_cnt = 4  # プレイヤーの動作
-        self.SMOKE_PTN = ((-1,-3),(-3,-1),(2,0))
-        self.ptn = pyxel.rndi(0,2)  # ランダムなパターンを選択
+        self.SMOKE_PTN = (((-1,-2),(2,0),(1,2)), ((1,-2),(-2,0),(-1,2)))
+        self.ptn = pyxel.rndi(0,1)
         self.set_atk_range(self.x, self.y, 8, 16, putb=True)
     
     def __del__(self):
@@ -568,7 +579,7 @@ class BaseProjectile:
         pass
 
 class Octorok(BaseEnemy):
-    def __init__(self, x, y, hp=1):
+    def __init__(self, x, y, hp=3):  # ここを hp=1 から hp=3 に変更
         super().__init__(x, y, hp)
         self.shooting = 0  # 発射タイマー
         self.shoot_interval = pyxel.rndi(100, 200)  # 発射間隔
@@ -907,9 +918,20 @@ class App:
         else:
             self.player.hold_b = False
     
-    def player_damaged(self, pt=1):
+    def player_damaged(self, pt=1, direction=None):
         self.player.damage_count = 80
         self.player.updown_hp(-pt)
+        
+        # ノックバック処理の追加
+        if direction is None:
+            # 方向が指定されていない場合は、プレイヤーの向きと反対方向に
+            self.player.knockback_dir = REV_DIR[self.player.direction]
+        else:
+            # 敵や発射物の方向と反対方向に
+            self.player.knockback_dir = REV_DIR[direction]
+            
+        # ノックバックの時間を設定
+        self.player.knockback_count = 10
 
     def draw(self):
         pyxel.cls(0)
